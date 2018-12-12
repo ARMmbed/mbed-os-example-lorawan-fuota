@@ -1,0 +1,134 @@
+{
+    "config": {
+        "lora-radio": {
+            "help": "Which radio to use (options: SX1272,SX1276)",
+            "value": "SX1276"
+        },
+        "sotp-section-1-address": {
+            "help": "Flash sector address for SOTP sector 1",
+            "macro_name": "PAL_INTERNAL_FLASH_SECTION_1_ADDRESS",
+            "value": null
+        },
+        "sotp-section-1-size": {
+            "help": "Flash sector size for SOTP sector 1",
+            "macro_name": "PAL_INTERNAL_FLASH_SECTION_1_SIZE",
+            "value": null
+        },
+        "sotp-section-2-address": {
+            "help": "Flash sector address for SOTP sector 2",
+            "macro_name": "PAL_INTERNAL_FLASH_SECTION_2_ADDRESS",
+            "value": null
+        },
+        "sotp-section-2-size": {
+            "help": "Flash sector size for SOTP sector 2",
+            "macro_name": "PAL_INTERNAL_FLASH_SECTION_2_SIZE",
+            "value": null
+        },
+        "fragmentation-bootloader-header-offset": {
+            "help": "Address in external flash where to store the header for the bootloader, needs to be erase & write sector aligned",
+            "value": "0"
+        },
+        "fragmentation-storage-offset": {
+            "help": "Address in external flash where to start storing fragments, needs to be erase & write sector aligned",
+            "value": "0x210"
+        },
+        "update-client-application-details": {
+            "help": "Location in *internal* flash to store application details (used by the combine script)",
+            "value": "0x0"
+        },
+        "flash-start-address": {
+            "help": "Start address of internal flash",
+            "value": null
+        },
+
+        "main_stack_size":     { "value": 4096 },
+
+        "lora-spi-mosi":       { "value": "NC" },
+        "lora-spi-miso":       { "value": "NC" },
+        "lora-spi-sclk":       { "value": "NC" },
+        "lora-cs":             { "value": "NC" },
+        "lora-reset":          { "value": "NC" },
+        "lora-dio0":           { "value": "NC" },
+        "lora-dio1":           { "value": "NC" },
+        "lora-dio2":           { "value": "NC" },
+        "lora-dio3":           { "value": "NC" },
+        "lora-dio4":           { "value": "NC" },
+        "lora-dio5":           { "value": "NC" },
+        "lora-rf-switch-ctl1": { "value": "NC" },
+        "lora-rf-switch-ctl2": { "value": "NC" },
+        "lora-txctl":          { "value": "NC" },
+        "lora-rxctl":          { "value": "NC" },
+        "lora-ant-switch":     { "value": "NC" },
+        "lora-pwr-amp-ctl":    { "value": "NC" },
+        "lora-tcxo":           { "value": "NC" }
+    },
+    "target_overrides": {
+        "*": {
+            "platform.stdio-convert-newlines": true,
+            "platform.stdio-baud-rate": 115200,
+            "mbed-trace.enable": 1,
+            "lora.over-the-air-activation": true,
+            "lora.duty-cycle-on": true,
+            "lora.phy": "EU868"
+        },
+
+        "FF1705_L151CC": {
+            "target.features_add": ["BOOTLOADER"],
+
+            "lora-radio":           "SX1272",
+            "lora-spi-mosi":        "LORA_MOSI",
+            "lora-spi-miso":        "LORA_MISO",
+            "lora-spi-sclk":        "LORA_SCK",
+            "lora-cs":              "LORA_NSS",
+            "lora-reset":           "LORA_RESET",
+            "lora-dio0":            "LORA_DIO0",
+            "lora-dio1":            "LORA_DIO1",
+            "lora-dio2":            "LORA_DIO2",
+            "lora-dio3":            "LORA_DIO3",
+            "lora-dio4":            "LORA_DIO4",
+            "lora-dio5":            "NC",
+            "lora-rf-switch-ctl1":  "NC",
+            "lora-rf-switch-ctl2":  "NC",
+            "lora-txctl":           "NC",
+            "lora-rxctl":           "NC",
+            "lora-ant-switch":      "NC",
+            "lora-pwr-amp-ctl":     "NC",
+            "lora-tcxo":            "NC",
+
+            "lorawan-update-client.max-redundancy"      : "40",
+            "lorawan-update-client.slot-size"           : "(256*1024 + 272)",
+            "lorawan-update-client.slot0-header-address": "0x210",
+            "lorawan-update-client.slot0-fw-address"    : "(0x210 + 0x210)",
+            "lorawan-update-client.slot1-header-address": "0x40320",
+            "lorawan-update-client.slot1-fw-address"    : "(0x40320 + 0x210)",
+            "lorawan-update-client.slot2-header-address": "0x80430",
+            "lorawan-update-client.slot2-fw-address"    : "(0x80430 + 72)",
+            "lorawan-update-client.internal-flash-header": "0x08008000",
+            "lorawan-update-client.interop-testing"     : false,
+            "lorawan-update-client.overwrite-version"   : false,
+            "target.app_offset"                         : "0x8400",
+            "target.header_offset"                      : "0x8000",
+            "target.bootloader_img"                     : "bootloader/FF1705_L151CC.bin"
+        },
+        "SIMULATOR": {
+            "lorawan-update-client.max-redundancy"      : "40",
+            "lorawan-update-client.slot-size"           : "528 * 100",
+            "lorawan-update-client.slot0-header-address": "0x0",
+            "lorawan-update-client.slot0-fw-address"    : "528",
+            "lorawan-update-client.slot1-header-address": "528*100",
+            "lorawan-update-client.slot1-fw-address"    : "528*101",
+            "lorawan-update-client.slot2-header-address": "528*200",
+            "lorawan-update-client.slot2-fw-address"    : "528*201",
+            "lorawan-update-client.internal-flash-header": "0x0",
+            "lorawan-update-client.interop-testing"     : false,
+            "flash-start-address"                       : "0x0"
+        }
+    },
+    "macros": [
+        "MBED_HEAP_STATS_ENABLED=1",
+        "MBED_STACK_STATS_ENABLED=1",
+        "JANPATCH_STREAM=BDFILE",
+        "MBEDTLS_NO_DEFAULT_ENTROPY_SOURCES",
+        "MBEDTLS_CONFIG_FILE=\"fotalora_mbedtls_config.h\""
+    ]
+}

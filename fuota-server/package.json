@@ -1,0 +1,29 @@
+{
+  "name": "lorawan-fuota-server",
+  "version": "1.0.0",
+  "description": "Experimental FUOTA server for loraserver.io",
+  "main": "loraserver.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/armmbed/mbed-os-example-lorawan-fuota.git"
+  },
+  "keywords": [
+    "lorawan",
+    "mbed"
+  ],
+  "author": "Jan Jongboom <janjongboom@gmail.com>",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/armmbed/mbed-os-example-lorawan-fuota/issues"
+  },
+  "homepage": "https://github.com/armmbed/mbed-os-example-lorawan-fuota#readme",
+  "dependencies": {
+    "gps-time": "^1.0.3",
+    "mqtt": "^2.18.8",
+    "request": "^2.88.0",
+    "request-promise": "^4.2.2"
+  }
+}

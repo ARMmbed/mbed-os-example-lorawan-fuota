@@ -1,0 +1,12 @@
+.mbed
+.mbedignore
+at45-blockdevice/
+bootlloader/FF1705_L151CC_linked.bin
+mbed-lora-radio-drv/
+mbed-lorawan-update-client/
+mbed-os/
+mbed-printf/
+source/UpdateCerts.h
+UpdateCerts.h
+updates/
+.fota-keys/

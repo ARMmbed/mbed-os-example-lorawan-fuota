@@ -1,0 +1,12 @@
+{
+    "ignore": [
+        "./at45-blockdevice",
+        "./mbed-lorawan-update-client/update-client-hub-common/",
+        "./mbed-lorawan-update-client/janpatch/cli/",
+        "./mbed-lora-radio-drv/",
+        "./mbed-printf",
+        "./source/example_insecure_rot.c",
+        "./test-fw/"
+    ],
+    "disableTlsNullEntropy": true
+}
