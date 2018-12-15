@@ -9,7 +9,7 @@ This application implements multicast firmware updates over LoRaWAN for Mbed OS 
 * Cryptographic verification of new firmware.
 * Bootloader for flashing new firmware images.
 
-Want to learn more? [Here's a video](https://www.youtube.com/watch?v=0NoshDOqmdM).
+Want to learn more? [Here's a video about the process](https://www.youtube.com/watch?v=0NoshDOqmdM), and [here's a demo of this application](https://www.youtube.com/watch?v=SSbDT1jxxwg&feature=youtu.be).
 
 ## Target configuration
 
