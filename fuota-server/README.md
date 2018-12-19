@@ -13,9 +13,9 @@ Simple test FUOTA server for loraserver.io. To be used together with [this devic
     * LoRaWAN 1.0.2
     * ABP activation
     * Class C
-    * DevAddr: `0xFFFFFFFE`
-    * NwkSKey: `9977C3582805CCA3B251F0609C22D602`
-    * AppSKey: `DA450A27AF6BADC6C2EE7A466977EC4D`
+    * DevAddr: `0x01FFFFFF`
+    * NwkSKey: `BB75C362588F5D65FCC61C080B76DBA3`
+    * AppSKey: `C3F6C39B6B6496C29629F7E7E9B0CD29`
 1. To establish a connection between this device and the gateway make sure to send at least one message from the Class C device to the network (can also be done in the simulator). If you're on L-TEK FF1705 or Multi-Tech xDot and EU868 you can do this by flashing [xdot-classc-mc-activation-eu868.bin](xdot-classc-mc-activation-eu868.bin) to your device, clicking **RESET** and pressing **BUTTON1**. Observe the 'Live LoRaWAN frame logs' to verify that the message appeared.
 1. In `loraserver.js`:
     * Set the IP address of your server under `LORASERVER_HOST`.
