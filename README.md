@@ -20,7 +20,7 @@ This application runs on any Mbed-enabled development board, but requires some c
     * There seems to be a bug in the bootloader which does not allow you to start at address 0x0. Rather start at the next page.
 1. A Root of Trust needs to be configured. An example insecure RoT is provided, but you **should** replace this before going into production. See the [Pelion Device Management docs](https://cloud.mbed.com/docs/v1.4/connecting/pelion-device-management-edge-security-considerations.html#root-of-trust) for more information.
 
-The storage layer and firmware slots are already present for the [L-TEK FF1705](https://os.mbed.com/platforms/L-TEK-FF1705/) development board. We suggest this board if you want to test this solution out.
+The storage layer and firmware slots are already present for the [L-TEK FF1705](https://os.mbed.com/platforms/L-TEK-FF1705/) development board. We suggest this board if you want to test this solution out. If you have enough internal flash, you can use the [FlashIAPBlockDevice](https://os.mbed.com/docs/v5.10/apis/flashiapblockdevice.html).
 
 If you've added a new target configuration, please send a pull request to this repo!
 
@@ -144,6 +144,10 @@ The LoRa Alliance FUOTA test scenarios is also supported, but for this you need 
     ```
     $ node fuota-server/loraserver.js fuota-server/test-file-unsigned.txt
     ```
+    
+**FlashIAPBlockDevice**
+
+The interop tests require a lot less flash (only a few KB in slot 0) than the full update client. You can use the upper part of the internal flash as a scratch space in interop mode. See the [FlashIAPBlockDevice](https://os.mbed.com/docs/v5.10/apis/flashiapblockdevice.html) section in the Mbed OS documentation.
 
 ## Using the simulator for testing
 
