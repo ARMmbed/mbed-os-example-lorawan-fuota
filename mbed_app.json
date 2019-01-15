@@ -74,7 +74,8 @@
             "mbed-trace.enable": 1,
             "lora.over-the-air-activation": true,
             "lora.duty-cycle-on": true,
-            "lora.phy": "EU868"
+            "lora.phy": "US915",
+            "lora.fsb-mask": "{0x00FF, 0x0000, 0x0000, 0x0000, 0x0001}"
         },
 
         "FF1705_L151CC": {
