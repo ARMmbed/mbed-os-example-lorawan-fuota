@@ -21,14 +21,15 @@ If you've added a new target configuration, please send a pull request to this r
 
 ## Build this application
 
-1. Clone this repository via [Mbed CLI](https://os.mbed.com/docs/v5.10/tools/installation-and-setup.html):
+1. Install [Mbed CLI](https://os.mbed.com/docs/v5.10/tools/installation-and-setup.html) and the [GNU ARM Embedded Toolchain 6](https://developer.arm.com/open-source/gnu-toolchain/gnu-rm).
+1. Import this repository via:
 
     ```
     $ mbed import https://github.com/armmbed/mbed-os-example-lorawan-fuota
     ```
 
 1. In `main.cpp` specify your AppEui and AppKey.
-1. In `mbed_app.json` specify your frequency plan.
+1. In `mbed_app.json` specify your frequency plan (and [FSB](https://github.com/ARMmbed/mbed-os/blob/master/features/lorawan/FSB_Usage.txt)).
 
 Next, you need to generate a public/private key pair. The public key is held in your application, and the private key is used to sign updates.
 
@@ -53,7 +54,7 @@ With everything configured, you can build the application.
 1. Build this application via:
 
     ```
-    $ mbed compile -m FF1705_L151CC -t GCC_ARM --profile=./profiles/tiny.json
+    $ mbed compile -m auto -t GCC_ARM --profile=./profiles/tiny.json
     ```
 
 1. Drag `BUILD/YOUR_TARGET/GCC_ARM-TINY/mbed-os-example-lorawan-fuota.bin` onto your development board (mounts as flash storage device).
