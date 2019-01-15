@@ -1,5 +1,10 @@
 {
     "config": {
+        "activity-led": {
+            "help": "Which LED to blink on activity, on STM targets do NOT use LED1 as it interferes with the LoRa radio",
+            "macro_name": "ACTIVITY_LED",
+            "value": "LED1"
+        },
         "lora-radio": {
             "help": "Which radio to use (options: SX1272,SX1276)",
             "value": "SX1276"
@@ -114,6 +119,7 @@
             "target.features_add"                       : ["BOOTLOADER"],
             "target.components_add"                     : ["QSPIF"],
 
+            "activity-led":        "NC",
             "lora-radio":          "SX1276",
             "lora-spi-mosi":       "D11",
             "lora-spi-miso":       "D12",

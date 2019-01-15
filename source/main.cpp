@@ -20,22 +20,9 @@
 #include "LoRaWANInterface.h"
 #include "lora_radio_helper.h"
 #include "dev_eui_helper.h"
+#include "storage_helper.h"
 #include "UpdateCerts.h"
 #include "LoRaWANUpdateClient.h"
-
-#if defined(TARGET_SIMULATOR)
-// Initialize a persistent block device with 528 bytes block size, and 256 blocks (mimicks the at45, which also has 528 size blocks)
-#include "SimulatorBlockDevice.h"
-SimulatorBlockDevice bd("lorawan-frag-in-flash", 256 * 528, static_cast<uint64_t>(528));
-#elif defined(TARGET_FF1705_L151CC)
-// Flash interface on the L-TEK xDot shield
-#include "AT45BlockDevice.h"
-AT45BlockDevice bd(SPI_MOSI, SPI_MISO, SPI_SCK, SPI_NSS);
-#elif defined(COMPONENT_QSPIF)
-// QSPI Flash interface
-#include "QSPIFBlockDevice.h"
-QSPIFBlockDevice bd(QSPI_FLASH1_IO0, QSPI_FLASH1_IO1, QSPI_FLASH1_IO2, QSPI_FLASH1_IO3, QSPI_FLASH1_SCK, QSPI_FLASH1_CSN, QSPIF_POLARITY_MODE_0, MBED_CONF_QSPIF_QSPI_FREQ);
-#endif
 
 EventQueue evqueue;
 
@@ -59,7 +46,7 @@ static bool clock_is_synced = false;
 static LoRaWANUpdateClientSendParams_t queued_message;
 static bool queued_message_waiting = false;
 
-static DigitalOut led1(LED1);
+static DigitalOut led1(ACTIVITY_LED);
 
 static void turn_led_on() {
     led1 = 1;
@@ -83,7 +70,6 @@ static void switch_to_class_a() {
     // wait for a few seconds to send the message
     evqueue.call_in(5000, &send_message);
 }
-
 
 static void switch_to_class_c() {
     printf("Switch to Class C\n");
@@ -298,8 +284,6 @@ int main() {
 
     // make your event queue dispatching events forever
     evqueue.dispatch_forever();
-
-    return 0;
 }
 
 // This is called from RX_DONE, so whenever a message came in

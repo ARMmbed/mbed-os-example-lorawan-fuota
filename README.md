@@ -13,14 +13,9 @@ Want to learn more? [Here's a video about the process](https://www.youtube.com/w
 
 ## Target configuration
 
-This application runs on any Mbed-enabled development board, but requires some configuration.
+This application runs on any Mbed-enabled development board, but requires some configuration. See the [porting guide](docs/porting-guide.md) for more information.
 
-1. Storage layer needs to be specified in both the [bootloader](https://github.com/janjongboom/mbed-bootloader/tree/ff1705_l151cc) and in this application (both in `main.cpp`).
-1. Firmware slots need to be configured in both the bootloader and this application. See `mbed_app.json`. Note that these must be erase sector and write sector aligned.
-    * There seems to be a bug in the bootloader which does not allow you to start at address 0x0. Rather start at the next page.
-1. A Root of Trust needs to be configured. An example insecure RoT is provided, but you **should** replace this before going into production. See the [Pelion Device Management docs](https://cloud.mbed.com/docs/v1.4/connecting/pelion-device-management-edge-security-considerations.html#root-of-trust) for more information.
-
-The storage layer and firmware slots are already present for the [L-TEK FF1705](https://os.mbed.com/platforms/L-TEK-FF1705/) development board. We suggest this board if you want to test this solution out.
+The storage layer and firmware slots are already present for the [L-TEK FF1705](https://os.mbed.com/platforms/L-TEK-FF1705/) and [DISCO-L475VG](https://os.mbed.com/platforms/ST-Discovery-L475E-IOT01A/) (with a radio shield) development boards. We suggest these boards if you want to test this solution out.
 
 If you've added a new target configuration, please send a pull request to this repo!
 
