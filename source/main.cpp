@@ -27,9 +27,15 @@
 EventQueue evqueue;
 
 // Note: if the device has built-in dev eui (see dev_eui_helper.h), the dev eui will be overwritten in main()
-static uint8_t DEV_EUI[] = { 0x00, 0xA9, 0x9D, 0x49, 0x21, 0xB2, 0x6D, 0x75 };
-static uint8_t APP_EUI[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x00, 0xC1, 0x84 };
-static uint8_t APP_KEY[] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
+// static uint8_t DEV_EUI[] = { 0x00, 0xA9, 0x9D, 0x49, 0x21, 0xB2, 0x6D, 0x75 };
+// static uint8_t APP_EUI[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x00, 0xC1, 0x84 };
+// static uint8_t APP_KEY[] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
+
+static uint8_t NET_ID = 2;
+static uint32_t DEV_ADDR = 0x04611D8E;
+static uint8_t NWK_SKEY[] = { 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x05 };
+static uint8_t APP_SKEY[] = { 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x06 };
+static uint8_t GEN_APPKEY[] = { 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x00 };
 
 static void lora_event_handler(lorawan_event_t event);
 static void lora_uc_send(LoRaWANUpdateClientSendParams_t &params);
@@ -38,7 +44,7 @@ static void send_message();
 
 static LoRaWANInterface lorawan(radio);
 static lorawan_app_callbacks_t callbacks;
-static LoRaWANUpdateClient uc(&bd, APP_KEY, lora_uc_send);
+static LoRaWANUpdateClient uc(&bd, GEN_APPKEY, lora_uc_send);
 static loramac_protocol_params class_a_params;  // @todo: this is 816 bytes, can we use a smaller structure?
 static LoRaWANUpdateClientClassCSession_t class_c_details;
 static bool in_class_c_mode = false;
@@ -257,19 +263,26 @@ int main() {
     }
 
     lorawan.set_device_class(CLASS_A);
-    lorawan.set_datarate(5); // SF7BW125
+    lorawan.set_datarate(DR_3); // SF7BW125 in US915
 
-    if (get_built_in_dev_eui(DEV_EUI, sizeof(DEV_EUI)) == 0) {
-        printf("read built-in dev eui: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-            DEV_EUI[0], DEV_EUI[1], DEV_EUI[2], DEV_EUI[3], DEV_EUI[4], DEV_EUI[5], DEV_EUI[6], DEV_EUI[7]);
-    }
+    // if (get_built_in_dev_eui(DEV_EUI, sizeof(DEV_EUI)) == 0) {
+    //     printf("read built-in dev eui: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+    //         DEV_EUI[0], DEV_EUI[1], DEV_EUI[2], DEV_EUI[3], DEV_EUI[4], DEV_EUI[5], DEV_EUI[6], DEV_EUI[7]);
+    // }
 
     lorawan_connect_t connect_params;
-    connect_params.connect_type = LORAWAN_CONNECTION_OTAA;
-    connect_params.connection_u.otaa.dev_eui = DEV_EUI;
-    connect_params.connection_u.otaa.app_eui = APP_EUI;
-    connect_params.connection_u.otaa.app_key = APP_KEY;
-    connect_params.connection_u.otaa.nb_trials = 3;
+
+    // connect_params.connect_type = LORAWAN_CONNECTION_OTAA;
+    // connect_params.connection_u.otaa.dev_eui = DEV_EUI;
+    // connect_params.connection_u.otaa.app_eui = APP_EUI;
+    // connect_params.connection_u.otaa.app_key = APP_KEY;
+    // connect_params.connection_u.otaa.nb_trials = 3;
+
+    connect_params.connect_type = LORAWAN_CONNECTION_ABP;
+    connect_params.connection_u.abp.nwk_id = NET_ID;
+    connect_params.connection_u.abp.dev_addr = DEV_ADDR;
+    connect_params.connection_u.abp.nwk_skey = NWK_SKEY;
+    connect_params.connection_u.abp.app_skey = APP_SKEY;
 
     lorawan_status_t retcode = lorawan.connect(connect_params);
 
