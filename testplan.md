@@ -18,7 +18,7 @@ Please run the following tests before a release.
     $ mbed compile --profile=./profiles/tiny.json
     $ cp BUILD/FF1705_L151CC/GCC_ARM-TINY/mbed-os-example-lorawan-fuota.bin /Volumes/FF1705
     $ lorawan-fota-signing-tool create-frag-packets -i fuota-server/test-file.bin --output-format plain --frag-size 40 --redundancy-packets 5 -o fuota-server/test-file-unsigned.txt
-    $ LORA_HOST=192.168.122.132 LORA_DR=5 node fuota-server/loraserver.js fuota-server/test-file-unsigned.txt
+    $ LORA_HOST=192.168.122.134 LORA_DR=5 node fuota-server/loraserver.js fuota-server/test-file-unsigned.txt
     ```
 
 - Blinky
@@ -30,7 +30,7 @@ Please run the following tests before a release.
     $ mbed compile --profile=./profiles/tiny.json
     $ cp BUILD/FF1705_L151CC/GCC_ARM-TINY/mbed-os-example-lorawan-fuota.bin /Volumes/FF1705
     $ lorawan-fota-signing-tool sign-binary -b example-firmware/xdot-blinky.bin -o fuota-server/xdot-blinky-signed.txt --frag-size 204 --redundancy-packets 20 --output-format packets-plain --override-version
-    $ LORA_HOST=192.168.122.132 LORA_DR=5 node fuota-server/loraserver.js fuota-server/xdot-blinky-signed.txt
+    $ LORA_HOST=192.168.122.134 LORA_DR=5 node fuota-server/loraserver.js fuota-server/xdot-blinky-signed.txt
     ```
 
 - Delta update

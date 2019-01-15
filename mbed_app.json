@@ -110,6 +110,23 @@
             "target.header_offset"                      : "0x8000",
             "target.bootloader_img"                     : "bootloader/FF1705_L151CC.bin"
         },
+        "DISCO_L475VG_IOT01A": {
+            "target.features_add"                       : ["BOOTLOADER"],
+            "target.components_add"                     : ["QSPIF"],
+            "lorawan-update-client.max-redundancy"      : "40",
+            "lorawan-update-client.slot-size"           : "0x10000",
+            "lorawan-update-client.slot0-header-address": "0x1000",
+            "lorawan-update-client.slot0-fw-address"    : "(0x1000 + 296)",
+            "lorawan-update-client.slot1-header-address": "0x101000",
+            "lorawan-update-client.slot1-fw-address"    : "(0x101000 + 296)",
+            "lorawan-update-client.slot2-header-address": "0x201000",
+            "lorawan-update-client.slot2-fw-address"    : "(0x201000 + 72)",
+            "lorawan-update-client.internal-flash-header": "(0x08000000 + (34 * 1024))",
+            "lorawan-update-client.overwrite-version"   : false,
+            "lorawan-update-client.bd-page-size"        : "0x1000",
+            "target.app_offset"                         : "0x9000",
+            "target.header_offset"                      : "0x8800"
+        },
         "SIMULATOR": {
             "lorawan-update-client.max-redundancy"      : "40",
             "lorawan-update-client.slot-size"           : "528 * 100",
