@@ -125,7 +125,8 @@
             "lorawan-update-client.overwrite-version"   : false,
             "lorawan-update-client.bd-page-size"        : "0x1000",
             "target.app_offset"                         : "0x9000",
-            "target.header_offset"                      : "0x8800"
+            "target.header_offset"                      : "0x8800",
+            "target.bootloader_img"                     : "bootloader/DISCO_L475VG_IOT01A.bin"
         },
         "SIMULATOR": {
             "lorawan-update-client.max-redundancy"      : "40",
