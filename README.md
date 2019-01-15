@@ -291,4 +291,4 @@ It's useful to have a small, valid firmware image during testing (similar to `ex
 
 ## Mbed OS version
 
-This application is built on Mbed OS 5.10, but requires a single patch for session serialization ([here](https://github.com/janjongboom/mbed-os/commit/271c33d63f6cb1c01de7dd983552ab4af435d9af)). However, we believe that this is a sub-optimal solution that probably has some race conditions and are working to integrate a better solution into Mbed OS core.
+This application is built on Mbed OS 5.11, but requires a single patch for session serialization ([here](https://github.com/janjongboom/mbed-os/commit/271c33d63f6cb1c01de7dd983552ab4af435d9af)). However, we believe that this is a sub-optimal solution that probably has some race conditions and are working to integrate a better solution into Mbed OS core.
