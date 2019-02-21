@@ -20,25 +20,16 @@
 #include "LoRaWANInterface.h"
 #include "lora_radio_helper.h"
 #include "dev_eui_helper.h"
+#include "storage_helper.h"
 #include "UpdateCerts.h"
 #include "LoRaWANUpdateClient.h"
-
-#ifdef TARGET_SIMULATOR
-// Initialize a persistent block device with 528 bytes block size, and 256 blocks (mimicks the at45, which also has 528 size blocks)
-#include "SimulatorBlockDevice.h"
-SimulatorBlockDevice bd("lorawan-frag-in-flash", 256 * 528, static_cast<uint64_t>(528));
-#else
-// Flash interface on the L-TEK xDot shield
-#include "AT45BlockDevice.h"
-AT45BlockDevice bd(SPI_MOSI, SPI_MISO, SPI_SCK, SPI_NSS);
-#endif
 
 EventQueue evqueue;
 
 // Note: if the device has built-in dev eui (see dev_eui_helper.h), the dev eui will be overwritten in main()
 static uint8_t DEV_EUI[] = { 0x00, 0x80, 0x00, 0x00, 0x04, 0x00, 0x39, 0x94 };
 static uint8_t APP_EUI[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x00, 0xC1, 0x84 };
-static uint8_t APP_KEY[] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
+static uint8_t APP_KEY[] = { 0xB8, 0xB4, 0x33, 0x0D, 0xFD, 0xD5, 0xD8, 0x61, 0xE7, 0x37, 0xA6, 0xC9, 0x5E, 0x5F, 0xD3, 0xF0 };
 
 static void lora_event_handler(lorawan_event_t event);
 static void lora_uc_send(LoRaWANUpdateClientSendParams_t &params);
@@ -55,7 +46,7 @@ static bool clock_is_synced = false;
 static LoRaWANUpdateClientSendParams_t queued_message;
 static bool queued_message_waiting = false;
 
-static DigitalOut led1(LED1);
+static DigitalOut led1(ACTIVITY_LED);
 
 static void turn_led_on() {
     led1 = 1;
@@ -74,28 +65,14 @@ static void switch_to_class_a() {
 
     // put back the class A session
     lorawan.set_session(&class_a_params);
+    lorawan.enable_adaptive_datarate();
     lorawan.set_device_class(CLASS_A);
 
     // wait for a few seconds to send the message
     evqueue.call_in(5000, &send_message);
 }
 
-
-static void switch_to_class_c() {
-    printf("Switch to Class C\n");
-    turn_led_on();
-
-    lorawan.cancel_sending();
-    if (queued_message_waiting) {
-        queued_message_waiting = false;
-        free(queued_message.data);
-    }
-
-    in_class_c_mode = true;
-
-    // store the class A parameters
-    lorawan.get_session(&class_a_params);
-
+static void switch_class_c_rx2_params() {
     loramac_protocol_params class_c_params;
 
     // copy them to the class C params...
@@ -112,6 +89,27 @@ static void switch_to_class_c() {
     // and set the class C session
     lorawan.set_session(&class_c_params);
     lorawan.set_device_class(CLASS_C);
+}
+
+static void switch_to_class_c() {
+    printf("Switch to Class C\n");
+    turn_led_on();
+
+    lorawan.cancel_sending();
+    lorawan.disable_adaptive_datarate();
+
+    if (queued_message_waiting) {
+        queued_message_waiting = false;
+        free(queued_message.data);
+    }
+
+    in_class_c_mode = true;
+
+    // store the class A parameters
+    lorawan.get_session(&class_a_params);
+
+    // in 1.5 second, actually switch to Class C (allow clearing the queue in the LoRaWAN stack)
+    evqueue.call_in(1500, &switch_class_c_rx2_params);
 }
 
 // This runs in an interrupt routine, so just copy the parameter and dispatch to event queue
@@ -241,6 +239,7 @@ int main() {
 
     // Enable trace output for this demo, so we can see what the LoRaWAN stack does
     mbed_trace_init();
+    mbed_trace_exclude_filters_set("QSPIF");
 
     if (lorawan.initialize(&evqueue) != LORAWAN_STATUS_OK) {
         printf("LoRa initialization failed!\n");
@@ -260,13 +259,12 @@ int main() {
     lorawan.add_app_callbacks(&callbacks);
 
     // Enable adaptive data rating
-    if (lorawan.disable_adaptive_datarate() != LORAWAN_STATUS_OK) {
-        printf("disable_adaptive_datarate failed!\n");
+    if (lorawan.enable_adaptive_datarate() != LORAWAN_STATUS_OK) {
+        printf("enable_adaptive_datarate failed!\n");
         return -1;
     }
 
     lorawan.set_device_class(CLASS_A);
-    lorawan.set_datarate(5); // SF7BW125
 
     if (get_built_in_dev_eui(DEV_EUI, sizeof(DEV_EUI)) == 0) {
         printf("read built-in dev eui: %02x %02x %02x %02x %02x %02x %02x %02x\n",
@@ -293,8 +291,6 @@ int main() {
 
     // make your event queue dispatching events forever
     evqueue.dispatch_forever();
-
-    return 0;
 }
 
 // This is called from RX_DONE, so whenever a message came in
