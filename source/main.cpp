@@ -23,6 +23,10 @@
 #include "storage_helper.h"
 #include "UpdateCerts.h"
 #include "LoRaWANUpdateClient.h"
+#include "FragAssembler.h"
+#include "MulticastControlPackage.h"
+#include "ClockSyncControlPackage.h"
+#include "FragmentationControlPackage.h"
 
 EventQueue evqueue;
 
@@ -37,12 +41,14 @@ static void queue_next_send_message();
 static void send_message();
 
 static LoRaWANInterface lorawan(radio);
+static ClockSyncControlPackage clk_sync_plugin;
+static MulticastControlPackage mcast_plugin;
+static FragmentationControlPackage frag_plugin;
 static lorawan_app_callbacks_t callbacks;
+static mcast_controller_cbs_t mcast_cbs;
+
 static LoRaWANUpdateClient uc(&bd, APP_KEY, lora_uc_send);
-static loramac_protocol_params class_a_params;  // @todo: this is 816 bytes, can we use a smaller structure?
-static LoRaWANUpdateClientClassCSession_t class_c_details;
 static bool in_class_c_mode = false;
-static bool clock_is_synced = false;
 static LoRaWANUpdateClientSendParams_t queued_message;
 static bool queued_message_waiting = false;
 
@@ -64,37 +70,19 @@ static void switch_to_class_a() {
     in_class_c_mode = false;
 
     // put back the class A session
-    lorawan.set_session(&class_a_params);
     lorawan.enable_adaptive_datarate();
+    lorawan.restore_rx2_frequency_and_dr();
     lorawan.set_device_class(CLASS_A);
 
     // wait for a few seconds to send the message
     evqueue.call_in(5000, &send_message);
 }
 
-static void switch_class_c_rx2_params() {
-    loramac_protocol_params class_c_params;
-
-    // copy them to the class C params...
-    memcpy(&class_c_params, &class_a_params, sizeof(loramac_protocol_params));
-    class_c_params.dl_frame_counter = 0;
-    class_c_params.ul_frame_counter = 0;
-    class_c_params.dev_addr = class_c_details.deviceAddr;
-    memcpy(class_c_params.keys.nwk_skey, class_c_details.nwkSKey, 16);
-    memcpy(class_c_params.keys.app_skey, class_c_details.appSKey, 16);
-
-    class_c_params.sys_params.rx2_channel.frequency = class_c_details.downlinkFreq;
-    class_c_params.sys_params.rx2_channel.datarate = class_c_details.datarate;
-
-    // and set the class C session
-    lorawan.set_session(&class_c_params);
-    lorawan.set_device_class(CLASS_C);
-}
-
-static void switch_to_class_c() {
+static void switch_to_class_c(uint32_t life_time, uint8_t dr, uint32_t dl_freq) {
     printf("Switch to Class C\n");
     turn_led_on();
 
+    // cancel all pending class A messages
     lorawan.cancel_sending();
     lorawan.disable_adaptive_datarate();
 
@@ -103,22 +91,37 @@ static void switch_to_class_c() {
         free(queued_message.data);
     }
 
+    if (lorawan.set_rx2_frequency_and_dr(dl_freq, dr) != LORAWAN_STATUS_OK) {
+        printf("Failed to set up frequency %lu and dr %u for Class C session\n", dl_freq, dr);
+    } else {
+        printf("Class C session frequency: %lu, dr: %u\n", dl_freq, dr);
+    }
+
+    lorawan.set_device_class(CLASS_C);
+
     in_class_c_mode = true;
 
-    // store the class A parameters
-    lorawan.get_session(&class_a_params);
-
-    // in 1.5 second, actually switch to Class C (allow clearing the queue in the LoRaWAN stack)
-    evqueue.call_in(1500, &switch_class_c_rx2_params);
+    // switch back to class A after the timeout
+    evqueue.call_in(life_time * 1000, switch_to_class_a);
 }
 
-// This runs in an interrupt routine, so just copy the parameter and dispatch to event queue
-static void switch_to_class_c_irq(LoRaWANUpdateClientClassCSession_t* session) {
-    core_util_critical_section_enter();
-    memcpy(&class_c_details, session, sizeof(LoRaWANUpdateClientClassCSession_t));
-    core_util_critical_section_exit();
-
-    evqueue.call(&switch_to_class_c);
+static void switch_class(uint32_t device_class,
+                         uint32_t time_to_switch,
+                         uint8_t life_time,
+                         uint8_t dr,
+                         uint32_t dl_freq)
+{
+    if (device_class == CLASS_A) {
+        printf("Switching to class A in %lu seconds\n", time_to_switch);
+        evqueue.call_in(time_to_switch * 1000, switch_to_class_a);
+    }
+    else if (device_class == CLASS_C) {
+        printf("Switching to class C in %lu seconds\n", time_to_switch);
+        evqueue.call_in(time_to_switch * 1000, switch_to_class_c, life_time, dr, dl_freq);
+    }
+    else {
+        printf("Switching to unknown class %u?!\n", device_class);
+    }
 }
 
 static void lorawan_uc_fragsession_complete() {
@@ -142,6 +145,63 @@ static void lorawan_uc_firmware_ready() {
 }
 #endif
 
+static void lora_uc_send(clk_sync_response_t *resp) {
+    queued_message.port = CLOCK_SYNC_PORT;
+    queued_message.length = resp->size;
+    queued_message.confirmed = false; // @todo
+    queued_message.retriesAllowed = resp->forced_resync_required;
+
+    queued_message.data = (uint8_t*)malloc(resp->size);
+    if (!queued_message.data) {
+        printf("ERR! Failed to allocate %u bytes for queued_message!\n", resp->size);
+        return;
+    }
+    memcpy(queued_message.data, resp->data, resp->size);
+    queued_message_waiting = true;
+
+    // will be sent in the next iteration
+}
+
+static void lora_uc_send(mcast_ctrl_response_t *resp) {
+    queued_message.port = MULTICAST_CONTROL_PORT;
+    queued_message.length = resp->size;
+    queued_message.confirmed = false; // @todo
+    queued_message.retriesAllowed = true;
+
+    queued_message.data = (uint8_t*)malloc(resp->size);
+    if (!queued_message.data) {
+        printf("ERR! Failed to allocate %u bytes for queued_message!\n", resp->size);
+        return;
+    }
+    memcpy(queued_message.data, resp->data, resp->size);
+    queued_message_waiting = true;
+
+    // will be sent in the next iteration
+}
+
+static void lora_uc_send(frag_cmd_answer_t *resp) {
+    printf("Frag session resp length %lu\n", resp->size);
+    for (size_t ix = 0; ix < resp->size; ix++) {
+        printf("%02x ", resp->data[ix]);
+    }
+    printf("\n");
+
+    queued_message.port = FRAGMENTATION_CONTROL_PORT;
+    queued_message.length = resp->size;
+    queued_message.confirmed = false; // @todo
+    queued_message.retriesAllowed = true;
+
+    queued_message.data = (uint8_t*)malloc(resp->size);
+    if (!queued_message.data) {
+        printf("ERR! Failed to allocate %u bytes for queued_message!\n", resp->size);
+        return;
+    }
+    memcpy(queued_message.data, resp->data, resp->size);
+    queued_message_waiting = true;
+
+    // will be sent in the next iteration
+}
+
 static void lora_uc_send(LoRaWANUpdateClientSendParams_t &params) {
     queued_message = params;
     // copy the buffer
@@ -154,6 +214,10 @@ static void lora_uc_send(LoRaWANUpdateClientSendParams_t &params) {
     queued_message_waiting = true;
 
     // will be sent in the next iteration
+}
+
+static lorawan_status_t check_params_validity(uint8_t dr, uint32_t dl_freq) {
+    return lorawan.verify_multicast_freq_and_dr(dl_freq, dr);
 }
 
 // Send a message over LoRaWAN - todo, check for duty cycle
@@ -200,12 +264,18 @@ static void send_message() {
         return;
     }
 
-    if (!clock_is_synced) {
-        // this will trigger a lora_uc_send command
-        uc.requestClockSync(true);
-        // in the next command we'll actually send it
-        queue_next_send_message();
-        return;
+    if (lorawan.get_current_gps_time() < 1000000000) {
+        clk_sync_response_t *sync_resp = clk_sync_plugin.request_clock_sync(true);
+
+        if (sync_resp) {
+            printf("Sending clock sync now\n");
+            lora_uc_send(sync_resp);
+            send_message();
+            return;
+        }
+        else {
+            printf("Failed to request clock sync from clk_sync_plugin...\n");
+        }
     }
 
     // otherwise just send a random message (this is where you'd put your sensor data)
@@ -241,18 +311,21 @@ int main() {
     mbed_trace_init();
     mbed_trace_exclude_filters_set("QSPIF");
 
+    clk_sync_plugin.activate_clock_sync_package(callback(&lorawan, &LoRaWANInterface::get_current_gps_time),
+        callback(&lorawan, &LoRaWANInterface::set_current_gps_time));
+
+    // Activate multicast plugin with the GenAppKey
+    mcast_plugin.activate_multicast_control_package(APP_KEY, 16);
+
+    // Multicast control package callbacks
+    mcast_cbs.switch_class = callback(&switch_class);
+    mcast_cbs.check_params_validity = callback(&check_params_validity);
+    mcast_cbs.get_gps_time = callback(&lorawan, &LoRaWANInterface::get_current_gps_time);
+
     if (lorawan.initialize(&evqueue) != LORAWAN_STATUS_OK) {
         printf("LoRa initialization failed!\n");
         return -1;
     }
-
-    // update client callbacks, note that these run in an ISR!
-    uc.callbacks.switchToClassA = evqueue.event(switch_to_class_a); // dispatch to eventqueue
-    uc.callbacks.switchToClassC = switch_to_class_c_irq;
-
-    // These run in the context that calls the update client
-    uc.callbacks.fragSessionComplete = evqueue.event(lorawan_uc_fragsession_complete);
-    uc.callbacks.firmwareReady = evqueue.event(lorawan_uc_firmware_ready);
 
     // prepare application callbacks
     callbacks.events = callback(lora_event_handler);
@@ -293,9 +366,28 @@ int main() {
     evqueue.dispatch_forever();
 }
 
+frag_bd_opts_t *bd_cb_handler(uint8_t frag_index, uint32_t desc) {
+    // @todo: actually should be able to handle multiple frag_index'es but not now
+    static frag_bd_opts_t bd_opts;
+    static FragAssembler assembler;
+    static FragBDWrapper bdWrapper(&bd);
+
+    uc.printHeapStats("BDCB-BEFORE ");
+
+    printf("Creating storage layer for session %d with desc: %lu\n", frag_index, desc);
+
+    bd_opts.redundancy_max = MBED_CONF_LORAWAN_UPDATE_CLIENT_MAX_REDUNDANCY;
+    bd_opts.offset = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS;
+    bd_opts.fasm = &assembler;
+    bd_opts.bd = &bdWrapper;
+
+    uc.printHeapStats("BDCB-AFTER ");
+
+    return &bd_opts;
+}
+
 // This is called from RX_DONE, so whenever a message came in
-static void receive_message()
-{
+static void receive_message() {
     uint8_t rx_buffer[255] = { 0 };
     uint8_t port;
     int flags;
@@ -307,41 +399,51 @@ static void receive_message()
     }
 
     printf("Received %d bytes on port %u\n", retcode, port);
-
-    LW_UC_STATUS status = LW_UC_OK;
-
-    if (port == 200) {
-        status = uc.handleMulticastControlCommand(rx_buffer, retcode);
+    for (size_t ix = 0; ix < retcode; ix++) {
+        printf("%02x ", rx_buffer[ix]);
     }
-    else if (port == 201) {
-        // retrieve current session and set dev addr
-        loramac_protocol_params params;
-        lorawan.get_session(&params);
-        status = uc.handleFragmentationCommand(params.dev_addr, rx_buffer, retcode);
+    printf("\n");
+
+    if (port == CLOCK_SYNC_PORT) {
+        clk_sync_response_t *sync_resp = clk_sync_plugin.parse(rx_buffer, retcode);
+
+        printf("Clock sync bla %p\n", sync_resp);
+
+        if (sync_resp) {
+            printf("Queuing some crap\n");
+            lora_uc_send(sync_resp);
+        }
+    }
+    else if (port == MULTICAST_CONTROL_PORT) {
+        mcast_ctrl_response_t *mcast_resp = mcast_plugin.parse(rx_buffer, retcode,
+                                        lorawan.get_multicast_addr_register(),
+                                        &mcast_cbs);
+
+        if (mcast_resp) {
+            lora_uc_send(mcast_resp);
+        }
+    }
+    else if (port == FRAGMENTATION_CONTROL_PORT) {
+        lorawan_rx_metadata md;
+        lorawan.get_rx_metadata(md);
 
         // blink LED when receiving a packet in Class C mode
         if (in_class_c_mode) {
             turn_led_on();
             evqueue.call_in(200, &turn_led_off);
         }
-    }
-    else if (port == 202) {
-        status = uc.handleClockSyncCommand(rx_buffer, retcode);
-        if (status == LW_UC_OK) {
-            clock_is_synced = true;
-        }
-    }
-    else {
-        printf("Data received on port %d (length %d): ", port, retcode);
 
-        for (uint8_t i = 0; i < retcode; i++) {
-            printf("%02x ", rx_buffer[i]);
-        }
-        printf("\n");
-    }
+        frag_ctrl_response_t *frag_resp = frag_plugin.parse(rx_buffer, retcode, flags, md.dev_addr,
+                                            mbed::callback(bd_cb_handler),
+                                            lorawan.get_multicast_addr_register());
 
-    if (status != LW_UC_OK) {
-        printf("Failed to handle UC command on port %d, status %d\n", port, status);
+        if (frag_resp != NULL && frag_resp->type == FRAG_CMD_RESP) {
+            lora_uc_send(&frag_resp->cmd_ans);
+        }
+
+        if (frag_resp != NULL && frag_resp->type == FRAG_SESSION_STATUS && frag_resp->status == FRAG_SESSION_COMPLETE) {
+            lorawan_uc_fragsession_complete();
+        }
     }
 }
 
