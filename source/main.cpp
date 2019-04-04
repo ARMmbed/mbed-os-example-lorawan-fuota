@@ -181,6 +181,13 @@ static void send_message() {
 
     // @todo: implement retries allowed
     if (queued_message_waiting) {
+        // detect if this is class c session start message
+        // because if so, we should change the timeToStart to the current moment as we don't send immediately
+        if (queued_message.port == MCCONTROL_PORT && queued_message.length == MC_CLASSC_SESSION_ANS_LENGTH
+                && queued_message.data[0] == MC_CLASSC_SESSION_ANS) {
+            uc.updateClassCSessionAns(&queued_message);
+        }
+
         int16_t retcode = lorawan.send(
             queued_message.port,
             queued_message.data,
