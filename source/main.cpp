@@ -28,12 +28,14 @@
 #include "ClockSyncControlPackage.h"
 #include "FragmentationControlPackage.h"
 
+#define TRACE_GROUP "MAIN"
+
 EventQueue evqueue;
 
 // Note: if the device has built-in dev eui (see dev_eui_helper.h), the dev eui will be overwritten in main()
-static uint8_t DEV_EUI[] = { 0x00, 0x80, 0x00, 0x00, 0x04, 0x00, 0x39, 0x94 };
+static uint8_t DEV_EUI[] = { 0x00, 0x80, 0x00, 0x00, 0x04, 0x00, 0x04, 0xC9 };
 static uint8_t APP_EUI[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x00, 0xC1, 0x84 };
-static uint8_t APP_KEY[] = { 0xB8, 0xB4, 0x33, 0x0D, 0xFD, 0xD5, 0xD8, 0x61, 0xE7, 0x37, 0xA6, 0xC9, 0x5E, 0x5F, 0xD3, 0xF0 };
+static uint8_t APP_KEY[] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f };
 
 static void lora_event_handler(lorawan_event_t event);
 static void lora_uc_send(LoRaWANUpdateClientSendParams_t &params);
@@ -51,6 +53,16 @@ static LoRaWANUpdateClient uc(&bd, APP_KEY, lora_uc_send);
 static bool in_class_c_mode = false;
 static LoRaWANUpdateClientSendParams_t queued_message;
 static bool queued_message_waiting = false;
+
+// @todo: actually should be able to handle multiple frag_index'es but not now
+static frag_bd_opts_t bd_opts;
+static FragAssembler assembler;
+static FragBDWrapper bdWrapper(&bd);
+
+#if MBED_CONF_LORAWAN_UPDATE_CLIENT_INTEROP_TESTING
+uint32_t interop_crc32 = 0x0;
+#endif
+
 
 static DigitalOut led1(ACTIVITY_LED);
 
@@ -105,9 +117,9 @@ static void switch_to_class_c(uint32_t life_time, uint8_t dr, uint32_t dl_freq) 
     evqueue.call_in(life_time * 1000, switch_to_class_a);
 }
 
-static void switch_class(uint32_t device_class,
+static void switch_class(uint8_t device_class,
                          uint32_t time_to_switch,
-                         uint8_t life_time,
+                         uint32_t life_time,
                          uint8_t dr,
                          uint32_t dl_freq)
 {
@@ -124,12 +136,390 @@ static void switch_class(uint32_t device_class,
     }
 }
 
-static void lorawan_uc_fragsession_complete() {
+LW_UC_STATUS verifyAuthenticityAndWriteBootloader(uint32_t addr, UpdateSignature_t *header, size_t flashOffset, size_t flashLength);
+LW_UC_STATUS writeBootloaderHeader(uint32_t addr, uint32_t version, size_t fwSize, unsigned char sha_hash[32]);
+LW_UC_STATUS applySlot0Slot2DeltaUpdate(size_t sizeOfFwInSlot0, size_t sizeOfFwInSlot2, uint32_t *sizeOfFwInSlot1);
+
+/**
+ * Verify the authenticity (SHA hash and ECDSA hash) of a firmware package,
+ * and after passing verification write the bootloader header
+ *
+ * @param addr Address of firmware slot (MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS or MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_HEADER_ADDRESS)
+ * @param header Firmware manifest
+ * @param flashOffset Offset in flash of the firmware
+ * @param flashLength Length in flash of the firmware
+ */
+LW_UC_STATUS verifyAuthenticityAndWriteBootloader(uint32_t addr, UpdateSignature_t *header, size_t flashOffset, size_t flashLength) {
+
+    if (!uc.compare_buffers(header->manufacturer_uuid, UPDATE_CERT_MANUFACTURER_UUID, 16)) {
+        return LW_UC_SIGNATURE_MANUFACTURER_UUID_MISMATCH;
+    }
+
+    if (!uc.compare_buffers(header->device_class_uuid, UPDATE_CERT_DEVICE_CLASS_UUID, 16)) {
+        return LW_UC_SIGNATURE_DEVICECLASS_UUID_MISMATCH;
+    }
+
+    printf("Verification starting...\n");
+
+    // if (callbacks.verificationStarting) {
+    //     callbacks.verificationStarting();
+    // }
+
+    // Calculate the SHA256 hash of the file, and then verify whether the signature was signed with a trusted private key
+    unsigned char sha_out_buffer[32];
+    // Internal buffer for reading from BD
+    uint8_t sha_buffer[LW_UC_SHA256_BUFFER_SIZE];
+
+    // SHA256 requires a large buffer, alloc on heap instead of stack
+    FragmentationSha256* sha256 = new FragmentationSha256(&bdWrapper, sha_buffer, sizeof(sha_buffer));
+
+    sha256->calculate(flashOffset, flashLength, sha_out_buffer);
+
+    delete sha256;
+
+    tr_debug("New firmware SHA256 hash is: ");
+    for (size_t ix = 0; ix < 32; ix++) {
+        printf("%02x", sha_out_buffer[ix]);
+    }
+    printf("\n");
+
+    // now check that the signature is correct...
+    {
+        tr_debug("ECDSA signature is: ");
+        for (size_t ix = 0; ix < header->signature_length; ix++) {
+            printf("%02x", header->signature[ix]);
+        }
+        printf("\n");
+        tr_debug("Verifying signature...");
+
+        // ECDSA requires a large buffer, alloc on heap instead of stack
+        FragmentationEcdsaVerify* ecdsa = new FragmentationEcdsaVerify(UPDATE_CERT_PUBKEY, UPDATE_CERT_LENGTH);
+        bool valid = ecdsa->verify(sha_out_buffer, header->signature, header->signature_length);
+
+        delete ecdsa;
+
+        // if (callbacks.verificationFinished) {
+        //     callbacks.verificationFinished();
+        // }
+        printf("Verification finished...\n");
+
+        if (!valid) {
+            tr_warn("New firmware signature verification failed");
+            return LW_UC_SIGNATURE_ECDSA_FAILED;
+        }
+        else {
+            tr_debug("New firmware signature verification passed");
+        }
+    }
+
+    return writeBootloaderHeader(addr, header->version, flashLength, sha_out_buffer);
+}
+
+/**
+ * Write the bootloader header so the firmware can be flashed
+ *
+ * @param addr Beginning of the firmware slot (e.g. MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS)
+ * @param version Build timestamp of the firmware
+ * @param fwSize Size of the firmware in bytes
+ * @param sha_hash SHA256 hash of the firmware
+ *
+ * @returns LW_UC_OK if all went well, or non-0 status when something went wrong
+ */
+LW_UC_STATUS writeBootloaderHeader(uint32_t addr, uint32_t version, size_t fwSize, unsigned char sha_hash[32]) {
+    if (addr != MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS && addr != MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_HEADER_ADDRESS) {
+        return LW_UC_INVALID_SLOT;
+    }
+
+    arm_uc_firmware_details_t details;
+
+    // this is useful for tests, when the firmware is always older
+#if MBED_CONF_LORAWAN_UPDATE_CLIENT_OVERWRITE_VERSION == 1
+    // read internal flash page to see what version we're at
+    uint64_t currVersion;
+    LW_UC_STATUS status = getCurrentVersion(&currVersion);
+    if (status != LW_UC_OK) {
+        // fallback
+        currVersion = (uint64_t)MBED_BUILD_TIMESTAMP;
+    }
+    details.version = currVersion + 1;
+#else
+    details.version = static_cast<uint64_t>(version);
+#endif
+
+    details.size = fwSize;
+    memcpy(details.hash, sha_hash, 32); // SHA256 hash of the firmware
+    memset(details.campaign, 0, ARM_UC_GUID_SIZE); // todo, add campaign info
+    details.signatureSize = 0; // not sure what this is used for
+
+    tr_debug("writeBootloaderHeader:\n\taddr: %lu\n\tversion: %llu\n\tsize: %llu", addr, details.version, details.size);
+
+    uint8_t *fw_header_buff = (uint8_t*)malloc(ARM_UC_EXTERNAL_HEADER_SIZE_V2);
+    if (!fw_header_buff) {
+        tr_error("Could not allocate %d bytes for header", ARM_UC_EXTERNAL_HEADER_SIZE_V2);
+        return LW_UC_OUT_OF_MEMORY;
+    }
+
+    arm_uc_buffer_t buff = { ARM_UC_EXTERNAL_HEADER_SIZE_V2, ARM_UC_EXTERNAL_HEADER_SIZE_V2, fw_header_buff };
+
+    arm_uc_error_t err = arm_uc_create_external_header_v2(&details, &buff);
+
+    if (err.error != ERR_NONE) {
+        tr_error("Failed to create external header (%d)", err.error);
+        free(fw_header_buff);
+        return LW_UC_CREATE_BOOTLOADER_HEADER_FAILED;
+    }
+
+    int r = bdWrapper.program(buff.ptr, addr, buff.size);
+    if (r != BD_ERROR_OK) {
+        tr_error("Failed to program firmware header: %lu bytes at address 0x%lx", buff.size, addr);
+        free(fw_header_buff);
+        return LW_UC_BD_WRITE_ERROR;
+    }
+
+    tr_debug("Stored the update parameters in flash on 0x%lx. Reset the board to apply update.", addr);
+
+    free(fw_header_buff);
+
+    return LW_UC_OK;
+}
+
+#if MBED_CONF_LORAWAN_UPDATE_CLIENT_OVERWRITE_VERSION == 1
+/**
+ * Get the current version number of the application from internal flash
+ */
+LW_UC_STATUS getCurrentVersion(uint64_t* version) {
+#if DEVICE_FLASH
+    int r;
+    if ((r = _internalFlash.init()) != 0) {
+        tr_warn("Could not initialize internal flash (%d)", r);
+        return LW_UC_INTERNALFLASH_INIT_ERROR;
+    }
+
+    uint32_t sectorSize = _internalFlash.get_sector_size(MBED_CONF_LORAWAN_UPDATE_CLIENT_INTERNAL_FLASH_HEADER);
+    tr_debug("Internal flash sectorSize is %lu", sectorSize);
+
+    if (sectorSize < ARM_UC_INTERNAL_HEADER_SIZE_V2) {
+        tr_warn("SectorSize is smaller than ARM_UC_INTERNAL_HEADER_SIZE_V2 (%lu), cannot handle this", sectorSize);
+        return LW_UC_INTERNALFLASH_SECTOR_SIZE_SMALLER;
+    }
+
+    uint8_t *buffer = (uint8_t*)malloc(sectorSize);
+    if (!buffer) {
+        tr_warn("getCurrentVersion() - Could not allocate %lu bytes", sectorSize);
+        return LW_UC_OUT_OF_MEMORY;
+    }
+
+    if ((r = _internalFlash.read(buffer,  MBED_CONF_LORAWAN_UPDATE_CLIENT_INTERNAL_FLASH_HEADER, sectorSize)) != 0) {
+        tr_warn("Read on internal flash failed (%d)", r);
+        free(buffer);
+        return LW_UC_INTERNALFLASH_READ_ERROR;
+    }
+
+    if ((r = _internalFlash.deinit()) != 0) {
+        tr_warn("Could not de-initialize internal flash (%d)", r);
+        free(buffer);
+        return LW_UC_INTERNALFLASH_DEINIT_ERROR;
+    }
+
+    arm_uc_firmware_details_t details;
+
+    arm_uc_error_t err = arm_uc_parse_internal_header_v2(const_cast<uint8_t*>(buffer), &details);
+    if (err.error != ERR_NONE) {
+        tr_warn("Internal header parsing failed (%d)", err.error);
+        free(buffer);
+        return LW_UC_INTERNALFLASH_HEADER_PARSE_FAILED;
+    }
+
+    *version = details.version;
+    tr_debug("Version (from internal flash) is %llu", details.version);
+    free(buffer);
+    return LW_UC_OK;
+#else
+    *version = (uint64_t)MBED_BUILD_TIMESTAMP;
+    return LW_UC_OK;
+#endif
+}
+#endif
+
+/**
+ * Apply a delta update between slot 2 (source file) and slot 0 (diff file) and place in slot 1
+ *
+ * @param sizeOfFwInSlot0 Size of the diff image that we just received
+ * @param sizeOfFwInSlot2 Expected size of firmware in slot 2 (will do sanity check)
+ * @param sizeOfFwInSlot1 Out parameter which will be set to the size of the new firmware in slot 1
+ */
+LW_UC_STATUS applySlot0Slot2DeltaUpdate(size_t sizeOfFwInSlot0, size_t sizeOfFwInSlot2, uint32_t *sizeOfFwInSlot1) {
+    // read details about the current firmware, it's in the slot2 header
+    arm_uc_firmware_details_t curr_details;
+    int bd_status = bdWrapper.read(&curr_details, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS, sizeof(arm_uc_firmware_details_t));
+    if (bd_status != BD_ERROR_OK) {
+        return LW_UC_BD_READ_ERROR;
+    }
+
+    // so... sanity check, do we have the same size in both places
+    if (sizeOfFwInSlot2 != curr_details.size) {
+        tr_warn("Diff size mismatch, expecting %u (manifest) but got %llu (slot 2 content)", sizeOfFwInSlot2, curr_details.size);
+        return LW_UC_DIFF_SIZE_MISMATCH;
+    }
+
+    // calculate sha256 hash for current fw & diff file (for debug purposes)
+    {
+        unsigned char sha_out_buffer[32];
+        uint8_t sha_buffer[LW_UC_SHA256_BUFFER_SIZE];
+        FragmentationSha256* sha256 = new FragmentationSha256(&bdWrapper, sha_buffer, sizeof(sha_buffer));
+
+        tr_debug("Firmware hash in slot 2 (current firmware): ");
+        sha256->calculate(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_FW_ADDRESS, sizeOfFwInSlot2, sha_out_buffer);
+        uc.print_buffer(sha_out_buffer, 32, false);
+        printf("\n");
+
+        tr_debug("Firmware hash in slot 2 (expected): ");
+        uc.print_buffer(curr_details.hash, 32, false);
+        printf("\n");
+
+        if (!uc.compare_buffers(curr_details.hash, sha_out_buffer, 32)) {
+            tr_info("Firmware in slot 2 hash incorrect hash");
+            delete sha256;
+            return LW_UC_DIFF_INCORRECT_SLOT2_HASH;
+        }
+
+        tr_debug("Firmware hash in slot 0 (diff file): ");
+        sha256->calculate(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, sizeOfFwInSlot0, sha_out_buffer);
+        uc.print_buffer(sha_out_buffer, 32, false);
+        printf("\n");
+
+        delete sha256;
+    }
+
+    // now run the diff...
+    BDFILE source(&bdWrapper, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_FW_ADDRESS, sizeOfFwInSlot2);
+    BDFILE diff(&bdWrapper, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, sizeOfFwInSlot0);
+    BDFILE target(&bdWrapper, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_FW_ADDRESS, 0);
+
+    int v = apply_delta_update(&bdWrapper, LW_UC_JANPATCH_BUFFER_SIZE, &source, &diff, &target);
+
+    if (v != MBED_DELTA_UPDATE_OK) {
+        tr_warn("apply_delta_update failed %d", v);
+        return LW_UC_DIFF_DELTA_UPDATE_FAILED;
+    }
+
+    tr_debug("Patched firmware length is %ld", target.ftell());
+
+    *sizeOfFwInSlot1 = target.ftell();
+
+    return LW_UC_OK;
+}
+
+static void lorawan_uc_fragsession_complete(uint8_t frag_index) {
     printf("Frag session is complete\n");
+
+    switch_to_class_a();
+    // should cancel the evqueue.call_in here too I guess?
+
+    lorawan_frag_session_t *session = frag_plugin.get_frag_session(frag_index);
+    if (!session) {
+        printf("Could not fetch session?! %u\n", frag_index);
+        return;
+    }
+
+#if MBED_CONF_LORAWAN_UPDATE_CLIENT_INTEROP_TESTING
+    // Internal buffer for reading from BD
+    uint8_t crc_buffer[LW_UC_SHA256_BUFFER_SIZE];
+
+    printf("addr: %x, size: %lu\n",
+            MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS,
+            (static_cast<uint32_t>(session->nb_frag * session->frag_size) - session->padding));
+
+    uint8_t buff[995];
+    bdWrapper.read(buff, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, 995);
+
+    for (size_t ix = 0; ix < sizeof(buff); ix++) {
+        printf("%02x ", buff[ix]);
+    }
+    printf("\n");
+
+    FragmentationCrc32 crc32(&bdWrapper, crc_buffer, LW_UC_SHA256_BUFFER_SIZE);
+    uint32_t crc = crc32.calculate(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, (static_cast<uint32_t>(session->nb_frag * session->frag_size) - session->padding));
+    printf("Firmware is ready, CRC32 hash is %08lx\n", crc);
+    interop_crc32 = crc;
+#else
+
+    // the signature is the last FOTA_SIGNATURE_LENGTH bytes of the package
+    size_t signatureOffset = (static_cast<size_t>(session->nb_frag * session->frag_size) - session->padding) - FOTA_SIGNATURE_LENGTH;
+
+    // Manifest to read in
+    UpdateSignature_t header;
+    if (bdWrapper.read(&header, signatureOffset, FOTA_SIGNATURE_LENGTH) != BD_ERROR_OK) {
+        printf("Reading sig failed...\n");
+        return;
+        // return LW_UC_BD_READ_ERROR;
+    }
+
+    // So... now it depends on whether this is a delta update or not...
+    uint8_t* diff_info = (uint8_t*)&(header.diff_info);
+
+    printf("Diff info: is_diff=%u, size_of_old_fw=%u\b", diff_info[0], (diff_info[1] << 16) + (diff_info[2] << 8) + diff_info[3]);
+
+    if (diff_info[0] == 0) { // Not a diff...
+        // last FOTA_SIGNATURE_LENGTH bytes should be ignored because the signature is not part of the firmware
+        size_t fwSize = (static_cast<size_t>(session->nb_frag * session->frag_size) - session->padding) - FOTA_SIGNATURE_LENGTH;
+        LW_UC_STATUS authStatus = verifyAuthenticityAndWriteBootloader(
+            MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS,
+            &header,
+            MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS,
+            fwSize);
+
+        if (authStatus != LW_UC_OK) {
+            printf("Firmware verification failed (%d)\n", authStatus);
+            //return authStatus;
+            return;
+        }
+
+        // if (callbacks.firmwareReady) {
+        //     callbacks.firmwareReady();
+        // }
+        printf("FIRMWARE IS READY!!\n");
+
+        return /*LW_UC_OK*/;
+    }
+    else {
+        uint32_t slot1Size;
+        LW_UC_STATUS deltaStatus = applySlot0Slot2DeltaUpdate(
+            (static_cast<size_t>(session->nb_frag * session->frag_size) - session->padding) - FOTA_SIGNATURE_LENGTH,
+            (diff_info[1] << 16) + (diff_info[2] << 8) + diff_info[3],
+            &slot1Size
+        );
+
+        if (deltaStatus != LW_UC_OK) {
+            printf("Delta update failed (%d)\n", deltaStatus);
+            // return deltaStatus;
+            return;
+        }
+
+        LW_UC_STATUS authStatus = verifyAuthenticityAndWriteBootloader(
+            MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_HEADER_ADDRESS,
+            &header,
+            MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_FW_ADDRESS,
+            slot1Size);
+
+        if (authStatus != LW_UC_OK) {
+            printf("Firmware verification failed (%d)\n", authStatus);
+            //return authStatus;
+            return;
+        }
+
+        // if (callbacks.firmwareReady) {
+        //     callbacks.firmwareReady();
+        // }
+        printf("FIRMWARE IS READY\n");
+
+        return /*LW_UC_OK*/;
+    }
+
+#endif
 }
 
 #if MBED_CONF_LORAWAN_UPDATE_CLIENT_INTEROP_TESTING
-uint32_t interop_crc32 = 0x0;
 static void lorawan_uc_firmware_ready(uint32_t crc) {
     uc.printHeapStats("FWREADY ");
     printf("Firmware is ready, CRC32 hash is %08lx\n", crc);
@@ -180,12 +570,6 @@ static void lora_uc_send(mcast_ctrl_response_t *resp) {
 }
 
 static void lora_uc_send(frag_cmd_answer_t *resp) {
-    printf("Frag session resp length %lu\n", resp->size);
-    for (size_t ix = 0; ix < resp->size; ix++) {
-        printf("%02x ", resp->data[ix]);
-    }
-    printf("\n");
-
     queued_message.port = FRAGMENTATION_CONTROL_PORT;
     queued_message.length = resp->size;
     queued_message.confirmed = false; // @todo
@@ -214,10 +598,6 @@ static void lora_uc_send(LoRaWANUpdateClientSendParams_t &params) {
     queued_message_waiting = true;
 
     // will be sent in the next iteration
-}
-
-static lorawan_status_t check_params_validity(uint8_t dr, uint32_t dl_freq) {
-    return lorawan.verify_multicast_freq_and_dr(dl_freq, dr);
 }
 
 // Send a message over LoRaWAN - todo, check for duty cycle
@@ -319,7 +699,7 @@ int main() {
 
     // Multicast control package callbacks
     mcast_cbs.switch_class = callback(&switch_class);
-    mcast_cbs.check_params_validity = callback(&check_params_validity);
+    mcast_cbs.check_params_validity = callback(&lorawan, &LoRaWANInterface::verify_multicast_freq_and_dr);
     mcast_cbs.get_gps_time = callback(&lorawan, &LoRaWANInterface::get_current_gps_time);
 
     if (lorawan.initialize(&evqueue) != LORAWAN_STATUS_OK) {
@@ -367,12 +747,23 @@ int main() {
 }
 
 frag_bd_opts_t *bd_cb_handler(uint8_t frag_index, uint32_t desc) {
-    // @todo: actually should be able to handle multiple frag_index'es but not now
-    static frag_bd_opts_t bd_opts;
-    static FragAssembler assembler;
-    static FragBDWrapper bdWrapper(&bd);
-
     uc.printHeapStats("BDCB-BEFORE ");
+
+    // clear out slot 0 and slot 1
+    int r = bd.init();
+    if (r != 0) {
+        printf("Initializing block device failed (%d)\n", r);
+        return NULL;
+    }
+    // if there's erase size misalignment between slot 0 / slot 1 / slot size this will fail
+    r = bd.erase(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE * 2);
+    if (r != 0) {
+        printf("Erasing block device failed (%d), addr: %llu, size: %llu\n", r,
+            static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS),
+            static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE) * 2);
+        return NULL;
+    }
+    printf("Erased slot 0 and slot 1\n");
 
     printf("Creating storage layer for session %d with desc: %lu\n", frag_index, desc);
 
@@ -407,17 +798,15 @@ static void receive_message() {
     if (port == CLOCK_SYNC_PORT) {
         clk_sync_response_t *sync_resp = clk_sync_plugin.parse(rx_buffer, retcode);
 
-        printf("Clock sync bla %p\n", sync_resp);
-
         if (sync_resp) {
-            printf("Queuing some crap\n");
             lora_uc_send(sync_resp);
         }
     }
     else if (port == MULTICAST_CONTROL_PORT) {
         mcast_ctrl_response_t *mcast_resp = mcast_plugin.parse(rx_buffer, retcode,
                                         lorawan.get_multicast_addr_register(),
-                                        &mcast_cbs);
+                                        &mcast_cbs,
+                                        true);
 
         if (mcast_resp) {
             lora_uc_send(mcast_resp);
@@ -437,12 +826,14 @@ static void receive_message() {
                                             mbed::callback(bd_cb_handler),
                                             lorawan.get_multicast_addr_register());
 
+        uc.printHeapStats("Frag ");
+
         if (frag_resp != NULL && frag_resp->type == FRAG_CMD_RESP) {
             lora_uc_send(&frag_resp->cmd_ans);
         }
 
         if (frag_resp != NULL && frag_resp->type == FRAG_SESSION_STATUS && frag_resp->status == FRAG_SESSION_COMPLETE) {
-            lorawan_uc_fragsession_complete();
+            lorawan_uc_fragsession_complete(frag_resp->index);
         }
     }
 }
@@ -474,7 +865,6 @@ static void lora_event_handler(lorawan_event_t event) {
             queue_next_send_message();
             break;
         case RX_DONE:
-            printf("Received message from Network Server\n");
             receive_message();
             break;
         case RX_TIMEOUT:
