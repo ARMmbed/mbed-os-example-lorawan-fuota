@@ -53,6 +53,7 @@
 #undef MBEDTLS_CHACHA20_C
 #undef MBEDTLS_CHACHAPOLY_C
 #undef MBEDTLS_POLY1305_C
+#undef MBEDTLS_PSA_CRYPTO_C
 
 #include "check_config.h"
 
