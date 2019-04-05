@@ -485,6 +485,8 @@ static void lorawan_uc_fragsession_complete(uint8_t frag_index) {
         // }
         printf("FIRMWARE IS READY!!\n");
 
+        NVIC_SystemReset();
+
         return /*LW_UC_OK*/;
     }
     else {
@@ -518,33 +520,50 @@ static void lorawan_uc_fragsession_complete(uint8_t frag_index) {
         // }
         printf("FIRMWARE IS READY\n");
 
+        NVIC_SystemReset();
+
         return /*LW_UC_OK*/;
     }
 
 #endif
 }
 
-#if MBED_CONF_LORAWAN_UPDATE_CLIENT_INTEROP_TESTING
-static void lorawan_uc_firmware_ready(uint32_t crc) {
-    uc.printHeapStats("FWREADY ");
-    printf("Firmware is ready, CRC32 hash is %08lx\n", crc);
-    interop_crc32 = crc;
-}
-#else
-static void lorawan_uc_firmware_ready() {
-    uc.printHeapStats("FWREADY ");
-    printf("Firmware is ready, hit **RESET** to flash the firmware\n");
+LW_UC_STATUS updateClassCSessionAns(LoRaWANUpdateClientSendParams_t *queued_message) {
+    if (queued_message->port != MCCONTROL_PORT || queued_message->length != MC_CLASSC_SESSION_ANS_LENGTH
+            || queued_message->data[0] != MC_CLASSC_SESSION_ANS) {
+        return LW_UC_NOT_CLASS_C_SESSION_ANS;
+    }
 
-    // reboot system
-    NVIC_SystemReset();
+    uint32_t originalTimeToStart = queued_message->data[2] + (queued_message->data[3] << 8) + (queued_message->data[4] << 16);
+
+    // calculate delta between original send time and now
+    uint32_t timeDelta = time(NULL) - queued_message->createdTimestamp;
+
+    uint32_t timeToStart;
+    if (timeDelta > originalTimeToStart) { // should already have started, send 0 back
+        timeToStart = 0;
+    }
+    else {
+        timeToStart = originalTimeToStart - timeDelta;
+    }
+
+    tr_debug("updateClassCSessionAns, originalTimeToStart=%lu, delta=%lu, newTimeToStart=%lu",
+        originalTimeToStart, timeDelta, timeToStart);
+
+    // update buffer
+    queued_message->data[2] = timeToStart & 0xff;
+    queued_message->data[3] = timeToStart >> 8 & 0xff;
+    queued_message->data[4] = timeToStart >> 16 & 0xff;
+
+    return LW_UC_OK;
 }
-#endif
 
 static void lora_uc_send(clk_sync_response_t *resp) {
     queued_message.port = CLOCK_SYNC_PORT;
     queued_message.length = resp->size;
     queued_message.confirmed = false; // @todo
     queued_message.retriesAllowed = resp->forced_resync_required;
+    queued_message.createdTimestamp = time(NULL);
 
     queued_message.data = (uint8_t*)malloc(resp->size);
     if (!queued_message.data) {
@@ -562,6 +581,7 @@ static void lora_uc_send(mcast_ctrl_response_t *resp) {
     queued_message.length = resp->size;
     queued_message.confirmed = false; // @todo
     queued_message.retriesAllowed = true;
+    queued_message.createdTimestamp = time(NULL);
 
     queued_message.data = (uint8_t*)malloc(resp->size);
     if (!queued_message.data) {
@@ -579,6 +599,7 @@ static void lora_uc_send(frag_cmd_answer_t *resp) {
     queued_message.length = resp->size;
     queued_message.confirmed = false; // @todo
     queued_message.retriesAllowed = true;
+    queued_message.createdTimestamp = time(NULL);
 
     queued_message.data = (uint8_t*)malloc(resp->size);
     if (!queued_message.data) {
@@ -630,6 +651,13 @@ static void send_message() {
 
     // @todo: implement retries allowed
     if (queued_message_waiting) {
+        // detect if this is class c session start message
+        // because if so, we should change the timeToStart to the current moment as we don't send immediately
+        if (queued_message.port == MCCONTROL_PORT && queued_message.length == MC_CLASSC_SESSION_ANS_LENGTH
+                && queued_message.data[0] == MC_CLASSC_SESSION_ANS) {
+            updateClassCSessionAns(&queued_message);
+        }
+
         int16_t retcode = lorawan.send(
             queued_message.port,
             queued_message.data,
@@ -690,7 +718,7 @@ static void queue_next_send_message() {
 }
 
 int main() {
-    printf("\nMbed OS 5 Firmware Update over LoRaWAN: mbed_session_impl branch\n");
+    printf("\nMbed OS 5 Firmware Update over LoRaWAN\n");
 
     // mbed_mem_trace_set_callback(mbed_mem_trace_default_callback);
 
