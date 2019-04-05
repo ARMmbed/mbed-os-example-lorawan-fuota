@@ -17,6 +17,7 @@
 
 #include "mbed.h"
 #include "mbed_trace.h"
+#include "mbed_mem_trace.h"
 #include "LoRaWANInterface.h"
 #include "lora_radio_helper.h"
 #include "dev_eui_helper.h"
@@ -67,9 +68,11 @@ uint32_t interop_crc32 = 0x0;
 static DigitalOut led1(ACTIVITY_LED);
 
 static void turn_led_on() {
+    if (ACTIVITY_LED == NC) return;
     led1 = 1;
 }
 static void turn_led_off() {
+    if (ACTIVITY_LED == NC) return;
     led1 = 0;
 }
 
@@ -422,13 +425,15 @@ static void lorawan_uc_fragsession_complete(uint8_t frag_index) {
         return;
     }
 
+    size_t totalSize = (static_cast<size_t>(session->nb_frag * session->frag_size) - session->padding);
+
 #if MBED_CONF_LORAWAN_UPDATE_CLIENT_INTEROP_TESTING
     // Internal buffer for reading from BD
     uint8_t crc_buffer[LW_UC_SHA256_BUFFER_SIZE];
 
     printf("addr: %x, size: %lu\n",
             MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS,
-            (static_cast<uint32_t>(session->nb_frag * session->frag_size) - session->padding));
+            totalSize);
 
     uint8_t buff[995];
     bdWrapper.read(buff, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, 995);
@@ -439,13 +444,13 @@ static void lorawan_uc_fragsession_complete(uint8_t frag_index) {
     printf("\n");
 
     FragmentationCrc32 crc32(&bdWrapper, crc_buffer, LW_UC_SHA256_BUFFER_SIZE);
-    uint32_t crc = crc32.calculate(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, (static_cast<uint32_t>(session->nb_frag * session->frag_size) - session->padding));
+    uint32_t crc = crc32.calculate(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, totalSize);
     printf("Firmware is ready, CRC32 hash is %08lx\n", crc);
     interop_crc32 = crc;
 #else
 
     // the signature is the last FOTA_SIGNATURE_LENGTH bytes of the package
-    size_t signatureOffset = (static_cast<size_t>(session->nb_frag * session->frag_size) - session->padding) - FOTA_SIGNATURE_LENGTH;
+    size_t signatureOffset = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS + (static_cast<size_t>(session->nb_frag * session->frag_size) - session->padding) - FOTA_SIGNATURE_LENGTH;
 
     // Manifest to read in
     UpdateSignature_t header;
@@ -685,7 +690,9 @@ static void queue_next_send_message() {
 }
 
 int main() {
-    printf("\nMbed OS 5 Firmware Update over LoRaWAN\n");
+    printf("\nMbed OS 5 Firmware Update over LoRaWAN: mbed_session_impl branch\n");
+
+    // mbed_mem_trace_set_callback(mbed_mem_trace_default_callback);
 
     // Enable trace output for this demo, so we can see what the LoRaWAN stack does
     mbed_trace_init();
@@ -749,21 +756,22 @@ int main() {
 frag_bd_opts_t *bd_cb_handler(uint8_t frag_index, uint32_t desc) {
     uc.printHeapStats("BDCB-BEFORE ");
 
-    // clear out slot 0 and slot 1
-    int r = bd.init();
-    if (r != 0) {
-        printf("Initializing block device failed (%d)\n", r);
-        return NULL;
-    }
-    // if there's erase size misalignment between slot 0 / slot 1 / slot size this will fail
-    r = bd.erase(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE * 2);
-    if (r != 0) {
-        printf("Erasing block device failed (%d), addr: %llu, size: %llu\n", r,
-            static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS),
-            static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE) * 2);
-        return NULL;
-    }
-    printf("Erased slot 0 and slot 1\n");
+    // done in stack now, comment out for now
+    // // clear out slot 0 and slot 1
+    // int r = bd.init();
+    // if (r != 0) {
+    //     printf("Initializing block device failed (%d)\n", r);
+    //     return NULL;
+    // }
+    // // if there's erase size misalignment between slot 0 / slot 1 / slot size this will fail
+    // r = bd.erase(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE * 2);
+    // if (r != 0) {
+    //     printf("Erasing block device failed (%d), addr: %llu, size: %llu\n", r,
+    //         static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS),
+    //         static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE) * 2);
+    //     return NULL;
+    // }
+    // printf("Erased slot 0 and slot 1\n");
 
     printf("Creating storage layer for session %d with desc: %lu\n", frag_index, desc);
 

@@ -256,7 +256,7 @@ function sendMcClassCSessionReq() {
             0x4,
             0x0, // mcgroupidheader
             startTime & 0xff, (startTime >> 8) & 0xff, (startTime >> 16) & 0xff, (startTime >> 24) & 0xff,
-            0x07, // session timeout
+            0x08, // session timeout pow(2,8) = 256. Up this if you need more time.
             0xd2, 0xad, 0x84, // dlfreq
             DATARATE // dr
         ]).toString('base64')
