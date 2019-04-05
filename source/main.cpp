@@ -44,11 +44,7 @@ static void queue_next_send_message();
 static void send_message();
 
 static LoRaWANInterface lorawan(radio);
-static ClockSyncControlPackage clk_sync_plugin;
-static MulticastControlPackage mcast_plugin;
-static FragmentationControlPackage frag_plugin;
 static lorawan_app_callbacks_t callbacks;
-static mcast_controller_cbs_t mcast_cbs;
 
 static LoRaWANUpdateClient uc(&bd, APP_KEY, lora_uc_send);
 static bool in_class_c_mode = false;
@@ -56,9 +52,7 @@ static LoRaWANUpdateClientSendParams_t queued_message;
 static bool queued_message_waiting = false;
 
 // @todo: actually should be able to handle multiple frag_index'es but not now
-static frag_bd_opts_t bd_opts;
-static FragAssembler assembler;
-static FragBDWrapper bdWrapper(&bd);
+
 
 #if MBED_CONF_LORAWAN_UPDATE_CLIENT_INTEROP_TESTING
 uint32_t interop_crc32 = 0x0;
@@ -726,16 +720,7 @@ int main() {
     mbed_trace_init();
     mbed_trace_exclude_filters_set("QSPIF");
 
-    clk_sync_plugin.activate_clock_sync_package(callback(&lorawan, &LoRaWANInterface::get_current_gps_time),
-        callback(&lorawan, &LoRaWANInterface::set_current_gps_time));
 
-    // Activate multicast plugin with the GenAppKey
-    mcast_plugin.activate_multicast_control_package(APP_KEY, 16);
-
-    // Multicast control package callbacks
-    mcast_cbs.switch_class = callback(&switch_class);
-    mcast_cbs.check_params_validity = callback(&lorawan, &LoRaWANInterface::verify_multicast_freq_and_dr);
-    mcast_cbs.get_gps_time = callback(&lorawan, &LoRaWANInterface::get_current_gps_time);
 
     if (lorawan.initialize(&evqueue) != LORAWAN_STATUS_OK) {
         printf("LoRa initialization failed!\n");
@@ -781,38 +766,6 @@ int main() {
     evqueue.dispatch_forever();
 }
 
-frag_bd_opts_t *bd_cb_handler(uint8_t frag_index, uint32_t desc) {
-    uc.printHeapStats("BDCB-BEFORE ");
-
-    // done in stack now, comment out for now
-    // // clear out slot 0 and slot 1
-    // int r = bd.init();
-    // if (r != 0) {
-    //     printf("Initializing block device failed (%d)\n", r);
-    //     return NULL;
-    // }
-    // // if there's erase size misalignment between slot 0 / slot 1 / slot size this will fail
-    // r = bd.erase(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE * 2);
-    // if (r != 0) {
-    //     printf("Erasing block device failed (%d), addr: %llu, size: %llu\n", r,
-    //         static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS),
-    //         static_cast<bd_size_t>(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE) * 2);
-    //     return NULL;
-    // }
-    // printf("Erased slot 0 and slot 1\n");
-
-    printf("Creating storage layer for session %d with desc: %lu\n", frag_index, desc);
-
-    bd_opts.redundancy_max = MBED_CONF_LORAWAN_UPDATE_CLIENT_MAX_REDUNDANCY;
-    bd_opts.offset = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS;
-    bd_opts.fasm = &assembler;
-    bd_opts.bd = &bdWrapper;
-
-    uc.printHeapStats("BDCB-AFTER ");
-
-    return &bd_opts;
-}
-
 // This is called from RX_DONE, so whenever a message came in
 static void receive_message() {
     uint8_t rx_buffer[255] = { 0 };
@@ -826,51 +779,35 @@ static void receive_message() {
     }
 
     printf("Received %d bytes on port %u\n", retcode, port);
-    for (size_t ix = 0; ix < retcode; ix++) {
-        printf("%02x ", rx_buffer[ix]);
-    }
-    printf("\n");
 
-    if (port == CLOCK_SYNC_PORT) {
-        clk_sync_response_t *sync_resp = clk_sync_plugin.parse(rx_buffer, retcode);
+    LW_UC_STATUS status = LW_UC_OK;
 
-        if (sync_resp) {
-            lora_uc_send(sync_resp);
-        }
+    if (port == 200) {
+        uc.handleMulticastControlCommand(rx_buffer, retcode);
     }
-    else if (port == MULTICAST_CONTROL_PORT) {
-        mcast_ctrl_response_t *mcast_resp = mcast_plugin.parse(rx_buffer, retcode,
-                                        lorawan.get_multicast_addr_register(),
-                                        &mcast_cbs,
-                                        true);
-
-        if (mcast_resp) {
-            lora_uc_send(mcast_resp);
-        }
-    }
-    else if (port == FRAGMENTATION_CONTROL_PORT) {
-        lorawan_rx_metadata md;
-        lorawan.get_rx_metadata(md);
+    else if (port == 201) {
+        uc.handleFragmentationCommand(rx_buffer, retcode);
 
         // blink LED when receiving a packet in Class C mode
         if (in_class_c_mode) {
             turn_led_on();
             evqueue.call_in(200, &turn_led_off);
         }
+    }
+    else if (port == 202) {
+        uc.handleClockSyncCommand(rx_buffer, retcode);
+    }
+    else {
+        printf("Data received on port %d (length %d): ", port, retcode);
 
-        frag_ctrl_response_t *frag_resp = frag_plugin.parse(rx_buffer, retcode, flags, md.dev_addr,
-                                            mbed::callback(bd_cb_handler),
-                                            lorawan.get_multicast_addr_register());
-
-        uc.printHeapStats("Frag ");
-
-        if (frag_resp != NULL && frag_resp->type == FRAG_CMD_RESP) {
-            lora_uc_send(&frag_resp->cmd_ans);
+        for (uint8_t i = 0; i < retcode; i++) {
+            printf("%02x ", rx_buffer[i]);
         }
+        printf("\n");
+    }
 
-        if (frag_resp != NULL && frag_resp->type == FRAG_SESSION_STATUS && frag_resp->status == FRAG_SESSION_COMPLETE) {
-            lorawan_uc_fragsession_complete(frag_resp->index);
-        }
+    if (status != LW_UC_OK) {
+        printf("Failed to handle UC command on port %d, status %d\n", port, status);
     }
 }
 
