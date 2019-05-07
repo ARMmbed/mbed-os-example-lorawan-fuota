@@ -128,6 +128,8 @@ The update will come in, and after updating the new program should run.
 
 The LoRa Alliance FUOTA test scenarios is also supported, but for this you need to enable interop mode. This will disable firmware verification (as it's not a real valid firmware going over the line).
 
+**Note:** This does not override the GenAppKey. If you have changed the GenAppKey you need to change it back to the interop GenAppKey in main.cpp.
+
 1. In `mbed_app.json`, set `lorawan-update-client.interop-testing` to `true`.
 1. Create fragments for the test file, via:
 
